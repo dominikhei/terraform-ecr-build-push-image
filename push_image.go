@@ -187,7 +187,3 @@ func deleteImage(repoName, imageDigest string) error {
 		return err
 	}
 }
-
-func main() {
-
-}
