@@ -7,6 +7,7 @@ import (
 	"strings"
 	"encoding/json"
 	"log"
+	"errors"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
@@ -99,6 +100,77 @@ func resourcePushImageDelete(d *schema.ResourceData) {
 		log.Fatal("Error deleting Image", err)
 	}
 	fmt.Println("Docker image successfully removed from ECR")
+}
+
+func resourcePushImageUpdate(d *schema.ResourceData) {
+	repoName := d.Get("ecr_repository_name")
+	mutability, err := getECRMutability(repoName)
+	if err != nil {
+		log.Fatal("Error checking the docker images mutability", err)
+	}
+	if mutability != "MUTABLE"{
+		log.Fatal("The ECR repo does not allow mutable images")
+	}
+
+	if d.HasChange("image_tag") {
+		oldTag, newTag := d.getChange("image_tag").(string)
+
+		imageDigest, err := getImageDigest(repoName, oldTag)
+		if err != nil {
+			log.Fatal("Error retriving Image digest", err)
+		}
+		err = updateImageTag(imageDigest, repoName, newTag)
+		if err != nil {
+			log.Fatal("Error updating Image Tag", err)
+		}
+
+
+
+	}
+}
+
+func updateImageTag(imageDigest, repoName, newImageTag string) error {
+
+	updateTagCMD := fmt.Sprintf("aws ecr put-image --repository-name %s --image-tag %s --image-manifest %s", repoName, newImageTag, imageDigest)
+	updateTag := exec.Command("bash", "-c", updateTagCMD)
+	out, err := updateTag.CombinedOutput()
+	if err != nil {
+		fmt.Println(string(out))
+		return err
+	}
+	return nil
+}
+
+func getECRMutability(repoName string) (string, error) {
+
+	type Repository struct {
+		RepositoryName     string `json:"repositoryName"`
+		ImageTagMutability string `json:"imageTagMutability"`
+	}
+	
+	getRepoCMD := exec.Command("aws ecr describe-repositories  --output json")
+	out, err := getRepoCMD.CombinedOutput() 
+	if err != nil {
+		fmt.Println(out)
+		return "", err
+	}
+	var data map[string][]Repository
+	if err := json.Unmarshal([]byte(out), &data); err != nil {
+		return "", err
+	}
+
+	repositories, ok := data["repositories"]
+	if !ok {
+		return "", errors.New("repositorie key does not exist")
+	}
+
+	for _, repo := range repositories {
+		if repo.RepositoryName == repoName {
+			return repo.ImageTagMutability, nil
+		}
+	}
+
+	return "", errors.New("Could not find the repository")	
 }
 
 func getAWSAccountID() (string, error) {
