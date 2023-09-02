@@ -45,7 +45,7 @@ func ResourcePushImage() *schema.Resource {
 	}
 
 
-func resourcePushImageCreate(d *schema.ResourceData, meta interface{}) {
+func resourcePushImageCreate(d *schema.ResourceData) {
 	
 	awsRegion := d.Get("aws_region").(string)
 	repoName := d.Get("ecr_repository_name").(string)
@@ -60,7 +60,7 @@ func resourcePushImageCreate(d *schema.ResourceData, meta interface{}) {
 	if err != nil {
 		log.Fatal("Error retrieving AWS account Id: ", err)
 	}
-	ecrUri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com", accountId, awsRegion)
+	ecrUri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com", awsAccountId, awsRegion)
 	ecrUriWithRepo := fmt.Sprintf("%s/%s", ecrUri, repoName)
 	ecrUriWithTag := fmt.Sprintf("%s:%s", ecrUriWithRepo, imageTag)
 
@@ -79,16 +79,13 @@ func resourcePushImageCreate(d *schema.ResourceData, meta interface{}) {
 	if err != nil {
 		log.Fatal("Error pushing Docker image", err)		
 	}
+	fmt.Println("Docker image successfully pushed to ECR")
 }
 
-func resourcePushImageDelete(d *schema.ResourceData, meta interface{}) { 
+func resourcePushImageDelete(d *schema.ResourceData) { 
 	
 	repoName := d.Get("ecr_repository_name").(string)
-	imageName := d.Get("image_name").(string)
-	var imageData []struct {
-		ImageDigest string `json:"imageDigest"`
-		ImageTag    string `json:"imageTag"`
-	}
+	imageTag := d.Get("image_tag").(string)
 
 	fmt.Println("Retrieving image digest from ECR")
 	imageDigest, err := getImageDigest(repoName, imageTag)
@@ -101,13 +98,14 @@ func resourcePushImageDelete(d *schema.ResourceData, meta interface{}) {
 	if err != nil {
 		log.Fatal("Error deleting Image", err)
 	}
+	fmt.Println("Docker image successfully removed from ECR")
 }
 
 func getAWSAccountID() (string, error) {
 	getAccountIdCMD := exec.Command("aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text")
 	accountId, err := getAccountIdCMD.CombinedOutput()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	accountIdTrimmed := strings.TrimSpace(string(accountId))
 	return accountIdTrimmed, nil
@@ -120,6 +118,7 @@ func buildDockerImage(imageNameAndTag, dockerfilePath string) error {
 		fmt.Println(string(out))
 		return err
 	}
+	return nil
 }
 
 func tagDockerImage(imageNameAndTag, ecrUriWithTag string) error {
@@ -130,13 +129,14 @@ func tagDockerImage(imageNameAndTag, ecrUriWithTag string) error {
 		fmt.Println(string(out))
 		return err
 	}
+	return nil
 }
 
 func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	dockerPushCmd := fmt.Sprintf("docker push %s", ecrUriWithTag)
 	pushImage := exec.Command("bash", "-c", dockerPushCmd)
 	authenticateCommand := exec.Command("bash", "-c", "aws ecr get-login-password --region " + awsRegion + " | docker login --username AWS --password-stdin " + ecrUri)
-
+	var err error
 	pushImage.Stdin, err = authenticateCommand.StdoutPipe()
 	if err != nil {
 		fmt.Println(pushImage.Stdin) //checken ob das geht
@@ -159,19 +159,25 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 		fmt.Println(errWait)
 		return errWait
 	}
+	return nil
 }
 
 func getImageDigest(repoName, imageTag string) (string, error) {
+
+	var imageData []struct {
+		ImageDigest string `json:"imageDigest"`
+		ImageTag    string `json:"imageTag"`
+	}
 	digestCommand := fmt.Sprintf("aws ecr list-images --repository-name %s --query \"imageIds[?imageTag=='%s']\" --output json", repoName, imageTag)
 	getDigest := exec.Command("bash", "-c", digestCommand)
-	out, err = getDigest.CombinedOutput()
+	out, err := getDigest.CombinedOutput()
 	if err != nil {
 		fmt.Println(string(out))
-		return nil, err
+		return "", err
 	}
-	err := json.Unmarshal([]byte(string(out)), &imageData) 
+	err = json.Unmarshal([]byte(string(out)), &imageData) 
 	if err != nil {
-		return nil, err
+		return "", err
 		}
 	imageDigest := imageData[0].ImageDigest
 
@@ -179,11 +185,12 @@ func getImageDigest(repoName, imageTag string) (string, error) {
 }
 
 func deleteImage(repoName, imageDigest string) error {
-	deleteCommand = fmt.Sprintf("aws ecr batch-delete-image --repository-name %s --image-ids imageDigest=%s --output text", repoName, imageDigest)
-	deleteImage = exec.Command("bash", "-c", deleteCommand)
-	out, err = deleteImage.CombinedOutput()
+	deleteCommand := fmt.Sprintf("aws ecr batch-delete-image --repository-name %s --image-ids imageDigest=%s --output text", repoName, imageDigest)
+	deleteImage := exec.Command("bash", "-c", deleteCommand)
+	out, err := deleteImage.CombinedOutput()
 	if err != nil {
 		fmt.Println(string(out))
 		return err
 	}
+	return nil
 }
