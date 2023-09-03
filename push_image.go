@@ -9,15 +9,14 @@ import (
 	"log"
 	"errors"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 )
 
 func ResourcePushImage() *schema.Resource {
 	return &schema.Resource{
 		Create: resourcePushImageCreate,
 		Delete: resourcePushImageDelete,
+		Update: resourcePushImageUpdate,
 		Schema: map[string]*schema.Schema{
 				"ecr_repository_name": {
 					Type:        schema.TypeString,
@@ -46,15 +45,35 @@ func ResourcePushImage() *schema.Resource {
 	}
 
 
-func resourcePushImageCreate(d *schema.ResourceData) {
+func resourcePushImageCreate(d *schema.ResourceData, meta interface{}) error {
 	
 	awsRegion := d.Get("aws_region").(string)
 	repoName := d.Get("ecr_repository_name").(string)
 	imageName := d.Get("image_name").(string)
 	imageTag := d.Get("image_tag").(string)
 	dockerfilePath := d.Get("dockerfile_path").(string)
-
 	imageNameAndTag := fmt.Sprintf("%s:%s", imageName, imageTag)
+
+	out, err := repoExists(repoName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if out != true {
+		log.Fatal("The provided ECR repository does not exist")
+	}
+
+	repoMutability, err := checkMutability(repoName, awsRegion)
+	if err != nil {
+		log.Fatal(err)
+	}
+	tagAlreadyExists, err := imageTagExist(imageTag, repoName) 
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if tagAlreadyExists == true && repoMutability == false {
+		log.Fatal("The repo is immutable and you are trying to push an image with a tag that already exists in it")
+	}
 
 	fmt.Println("Retrieving AWS account Id")
 	awsAccountId, err := getAWSAccountID()
@@ -73,104 +92,122 @@ func resourcePushImageCreate(d *schema.ResourceData) {
 	fmt.Println("Tagging Docker image")
 	err = tagDockerImage(imageNameAndTag, ecrUriWithTag)
 	if err != nil {
-		log.Fatal("Error tagging Docker image", err)		
+		log.Fatal("Error tagging Docker image: ", err)		
 	}
 	fmt.Println("Pushing Docker image")
 	err = pushDockerImage(ecrUriWithTag, awsRegion, ecrUri)
 	if err != nil {
-		log.Fatal("Error pushing Docker image", err)		
+		log.Fatal("Error pushing Docker image: ", err)		
 	}
 	fmt.Println("Docker image successfully pushed to ECR")
+
+	return nil
 }
 
-func resourcePushImageDelete(d *schema.ResourceData) { 
+
+func resourcePushImageDelete(d *schema.ResourceData, meta interface{}) error { 
 	
 	repoName := d.Get("ecr_repository_name").(string)
 	imageTag := d.Get("image_tag").(string)
 
-	fmt.Println("Retrieving image digest from ECR")
-	imageDigest, err := getImageDigest(repoName, imageTag)
+	out, err := repoExists(repoName)
 	if err != nil {
-		log.Fatal("Error retriving Image digest", err)
+		log.Fatal(err)
+	}
+	if out != true {
+		log.Fatal("The provided ECR repository does not exist")
+	}
+
+	out, err = imageTagExist(imageTag, repoName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if out != true {
+		log.Fatal("The provided Image tag does not exist in the repository")
 	}
 
 	fmt.Println("Deleting image")
-	err = deleteImage(repoName, imageDigest)
+	err = deleteImage(repoName, imageTag)
 	if err != nil {
 		log.Fatal("Error deleting Image", err)
 	}
 	fmt.Println("Docker image successfully removed from ECR")
+
+	return nil
 }
 
-func resourcePushImageUpdate(d *schema.ResourceData) {
-	repoName := d.Get("ecr_repository_name")
-	mutability, err := getECRMutability(repoName)
-	if err != nil {
-		log.Fatal("Error checking the docker images mutability", err)
-	}
-	if mutability != "MUTABLE"{
-		log.Fatal("The ECR repo does not allow mutable images")
-	}
-
+func resourcePushImageUpdate(d *schema.ResourceData, meta interface{}) error {
 	if d.HasChange("image_tag") {
-		oldTag, newTag := d.getChange("image_tag").(string)
+		repoName := d.Get("ecr_repository_name").(string)
+		oldVal, newVal := d.GetChange("image_tag")
+		oldTag := oldVal.(string)
+		newTag := newVal.(string)
+		awsRegion := d.Get("aws_region").(string)
 
-		imageDigest, err := getImageDigest(repoName, oldTag)
+		out, err := repoExists(repoName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if out != true {
+			log.Fatal("The provided ECR repository does not exist")
+		}
+	
+		out, err = imageTagExist(oldTag, repoName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if out != true {
+			log.Fatal("The previous Image tag does not exist anymore in the repository")
+		}
+	
+		repoMutability, err := checkMutability(repoName, awsRegion)
+		if err != nil {
+			log.Fatal(err)
+		}
+		newTagAlreadyExists, err := imageTagExist(newTag, repoName) 
+		if err != nil {
+			log.Fatal(err)
+		}
+	
+		if newTagAlreadyExists == true && repoMutability == false {
+			log.Fatal("The repositorie is immutable and you are trying to update an image with a tag that already exists in the repositorie")
+		}
+
+		imageManifest, err := getImageManifest(repoName, oldTag)
 		if err != nil {
 			log.Fatal("Error retriving Image digest", err)
 		}
-		err = updateImageTag(imageDigest, repoName, newTag)
+		err = updateImageTag(imageManifest, repoName, newTag)
 		if err != nil {
 			log.Fatal("Error updating Image Tag", err)
 		}
-
-
-
-	}
-}
-
-func updateImageTag(imageDigest, repoName, newImageTag string) error {
-
-	updateTagCMD := fmt.Sprintf("aws ecr put-image --repository-name %s --image-tag %s --image-manifest %s", repoName, newImageTag, imageDigest)
-	updateTag := exec.Command("bash", "-c", updateTagCMD)
-	out, err := updateTag.CombinedOutput()
-	if err != nil {
-		fmt.Println(string(out))
-		return err
+		err = deleteImage(repoName, oldTag)
+		if err != nil {
+			log.Fatal("Error deleting the old image tag")
+		}
 	}
 	return nil
 }
 
-func getECRMutability(repoName string) (string, error) {
+func getImageManifest(repoName, imageTag string) (string, error) {
 
-	type Repository struct {
-		RepositoryName     string `json:"repositoryName"`
-		ImageTagMutability string `json:"imageTagMutability"`
-	}
-	
-	getRepoCMD := exec.Command("aws ecr describe-repositories  --output json")
-	out, err := getRepoCMD.CombinedOutput() 
+	digestCMD := fmt.Sprintf("aws ecr batch-get-image --repository-name %s --image-ids imageTag=%s --query 'images[].imageManifest' --output text", repoName, imageTag)
+	digest := exec.Command("bash", "-c", digestCMD)
+	out, err := digest.CombinedOutput() 
 	if err != nil {
-		fmt.Println(out)
 		return "", err
 	}
-	var data map[string][]Repository
-	if err := json.Unmarshal([]byte(out), &data); err != nil {
-		return "", err
-	}
+	return string(out), nil
+}
 
-	repositories, ok := data["repositories"]
-	if !ok {
-		return "", errors.New("repositorie key does not exist")
+func updateImageTag(imageManifest, repoName, newImageTag string) error {
+	updateTagCMD := fmt.Sprintf("aws ecr put-image --repository-name %s --image-tag %s --image-manifest '%s'", repoName, newImageTag, imageManifest)
+	updateTag := exec.Command("bash", "-c", updateTagCMD)
+	_, err := updateTag.CombinedOutput()
+	if err != nil {
+		return err
 	}
-
-	for _, repo := range repositories {
-		if repo.RepositoryName == repoName {
-			return repo.ImageTagMutability, nil
-		}
-	}
-
-	return "", errors.New("Could not find the repository")	
+	return nil
 }
 
 func getAWSAccountID() (string, error) {
@@ -196,7 +233,7 @@ func buildDockerImage(imageNameAndTag, dockerfilePath string) error {
 func tagDockerImage(imageNameAndTag, ecrUriWithTag string) error {
 	tagCmd := fmt.Sprintf("docker tag %s %s", imageNameAndTag, ecrUriWithTag)
 	tag := exec.Command("bash", "-c", tagCmd)
-	out, err = tag.CombinedOutput()
+	out, err := tag.CombinedOutput()
 	if err != nil {
 		fmt.Println(string(out))
 		return err
@@ -211,7 +248,7 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	var err error
 	pushImage.Stdin, err = authenticateCommand.StdoutPipe()
 	if err != nil {
-		fmt.Println(pushImage.Stdin) //checken ob das geht
+		fmt.Println(pushImage.Stdin) 
 		return err
 	}
 	pushImage.Stdout = os.Stdout
@@ -234,30 +271,8 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	return nil
 }
 
-func getImageDigest(repoName, imageTag string) (string, error) {
-
-	var imageData []struct {
-		ImageDigest string `json:"imageDigest"`
-		ImageTag    string `json:"imageTag"`
-	}
-	digestCommand := fmt.Sprintf("aws ecr list-images --repository-name %s --query \"imageIds[?imageTag=='%s']\" --output json", repoName, imageTag)
-	getDigest := exec.Command("bash", "-c", digestCommand)
-	out, err := getDigest.CombinedOutput()
-	if err != nil {
-		fmt.Println(string(out))
-		return "", err
-	}
-	err = json.Unmarshal([]byte(string(out)), &imageData) 
-	if err != nil {
-		return "", err
-		}
-	imageDigest := imageData[0].ImageDigest
-
-	return imageDigest, err
-}
-
-func deleteImage(repoName, imageDigest string) error {
-	deleteCommand := fmt.Sprintf("aws ecr batch-delete-image --repository-name %s --image-ids imageDigest=%s --output text", repoName, imageDigest)
+func deleteImage(repoName, imageTag string) error {
+	deleteCommand := fmt.Sprintf("aws ecr batch-delete-image --repository-name %s --image-ids imageTag=%s --output text", repoName, imageTag)
 	deleteImage := exec.Command("bash", "-c", deleteCommand)
 	out, err := deleteImage.CombinedOutput()
 	if err != nil {
@@ -266,3 +281,60 @@ func deleteImage(repoName, imageDigest string) error {
 	}
 	return nil
 }
+
+func repoExists(repoName string) (bool, error) {
+	decribeRepos := exec.Command("bash", "-c", "aws ecr describe-repositories --query 'repositories[].repositoryName' --output json")
+	out, err :=  decribeRepos.CombinedOutput()
+	if err != nil {
+		fmt.Println(string(out))
+		return false, err
+	}
+	var repoNames []string
+	if err := json.Unmarshal(out, &repoNames); err != nil {
+		return false, err
+	}
+	for _, name := range repoNames {
+		if name == repoName {
+			return true, nil }
+		}
+	return false, errors.New("Repository does not exist")
+ }
+
+
+ func imageTagExist(imageTag, repoName string) (bool, error) {
+	listImagesCMD := fmt.Sprintf("aws ecr list-images --repository-name %s --query 'imageIds[].imageTag' --output json", repoName)
+	listImages := exec.Command("bash", "-c", listImagesCMD)
+	out, err := listImages.CombinedOutput()
+	if err != nil {
+		fmt.Println(string(out))
+		return false, err
+	}
+	var imageTags []string
+	if err := json.Unmarshal(out, &imageTags); err != nil {
+		return false, err
+	}
+	for _, name := range imageTags {
+		if name == imageTag {
+			return true, nil }
+		}
+	return false, nil
+ }
+
+ func checkMutability(repoName, awsRegion string) (bool, error) {
+	tagMutabilityCMD := fmt.Sprintf("aws ecr describe-repositories --repository-names %s --query 'repositories[].imageTagMutability' --output json --region %s", repoName, awsRegion)
+	tagMutability := exec.Command("bash", "-c", tagMutabilityCMD)
+	out, err := tagMutability.CombinedOutput()
+	if err != nil {
+		return false, err
+	}
+	var response []string
+	if err := json.Unmarshal(out, &response); err != nil {
+		return false, err
+	}
+	for _, value := range response {
+		if value == "IMMUTABLE" {
+			return false, nil
+		}
+	}
+	return true, nil
+ }
