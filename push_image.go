@@ -62,7 +62,7 @@ func resourcePushImageCreate(d *schema.ResourceData, meta interface{}) error {
 		log.Fatal("The provided ECR repository does not exist")
 	}
 
-	repoMutability, err := checkMutability(repoName, awsRegion)
+	repoMutability, err := isMutable(repoName, awsRegion)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func resourcePushImageUpdate(d *schema.ResourceData, meta interface{}) error {
 			log.Fatal("The previous Image tag does not exist anymore in the repository")
 		}
 	
-		repoMutability, err := checkMutability(repoName, awsRegion)
+		repoMutability, err := isMutable(repoName, awsRegion)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -322,7 +322,7 @@ func repoExists(repoName, awsRegion string) (bool, error) {
 	return false, nil
  }
 
- func checkMutability(repoName, awsRegion string) (bool, error) {
+ func isMutable(repoName, awsRegion string) (bool, error) {
 	tagMutabilityCMD := fmt.Sprintf("aws ecr describe-repositories --repository-names %s --query 'repositories[].imageTagMutability' --output json --region %s", repoName, awsRegion)
 	tagMutability := exec.Command("bash", "-c", tagMutabilityCMD)
 	out, err := tagMutability.CombinedOutput()
