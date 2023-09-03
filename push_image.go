@@ -54,7 +54,7 @@ func resourcePushImageCreate(d *schema.ResourceData, meta interface{}) error {
 	dockerfilePath := d.Get("dockerfile_path").(string)
 	imageNameAndTag := fmt.Sprintf("%s:%s", imageName, imageTag)
 
-	out, err := repoExists(repoName)
+	out, err := repoExists(repoName, awsRegion)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func resourcePushImageCreate(d *schema.ResourceData, meta interface{}) error {
 	if err != nil {
 		log.Fatal(err)
 	}
-	tagAlreadyExists, err := imageTagExist(imageTag, repoName) 
+	tagAlreadyExists, err := imageTagExist(imageTag, repoName, awsRegion) 
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -109,8 +109,9 @@ func resourcePushImageDelete(d *schema.ResourceData, meta interface{}) error {
 	
 	repoName := d.Get("ecr_repository_name").(string)
 	imageTag := d.Get("image_tag").(string)
+	awsRegion := d.Get("aws_-region").(string)
 
-	out, err := repoExists(repoName)
+	out, err := repoExists(repoName, awsRegion)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func resourcePushImageDelete(d *schema.ResourceData, meta interface{}) error {
 		log.Fatal("The provided ECR repository does not exist")
 	}
 
-	out, err = imageTagExist(imageTag, repoName)
+	out, err = imageTagExist(imageTag, repoName, awsRegion)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func resourcePushImageDelete(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	fmt.Println("Deleting image")
-	err = deleteImage(repoName, imageTag)
+	err = deleteImage(repoName, imageTag, awsRegion)
 	if err != nil {
 		log.Fatal("Error deleting Image", err)
 	}
@@ -144,7 +145,7 @@ func resourcePushImageUpdate(d *schema.ResourceData, meta interface{}) error {
 		newTag := newVal.(string)
 		awsRegion := d.Get("aws_region").(string)
 
-		out, err := repoExists(repoName)
+		out, err := repoExists(repoName, awsRegion)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -152,7 +153,7 @@ func resourcePushImageUpdate(d *schema.ResourceData, meta interface{}) error {
 			log.Fatal("The provided ECR repository does not exist")
 		}
 	
-		out, err = imageTagExist(oldTag, repoName)
+		out, err = imageTagExist(oldTag, repoName, awsRegion)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -164,7 +165,7 @@ func resourcePushImageUpdate(d *schema.ResourceData, meta interface{}) error {
 		if err != nil {
 			log.Fatal(err)
 		}
-		newTagAlreadyExists, err := imageTagExist(newTag, repoName) 
+		newTagAlreadyExists, err := imageTagExist(newTag, repoName, awsRegion) 
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -173,15 +174,15 @@ func resourcePushImageUpdate(d *schema.ResourceData, meta interface{}) error {
 			log.Fatal("The repositorie is immutable and you are trying to update an image with a tag that already exists in the repositorie")
 		}
 
-		imageManifest, err := getImageManifest(repoName, oldTag)
+		imageManifest, err := getImageManifest(repoName, oldTag, awsRegion)
 		if err != nil {
 			log.Fatal("Error retriving Image digest", err)
 		}
-		err = updateImageTag(imageManifest, repoName, newTag)
+		err = updateImageTag(imageManifest, repoName, newTag, awsRegion)
 		if err != nil {
 			log.Fatal("Error updating Image Tag", err)
 		}
-		err = deleteImage(repoName, oldTag)
+		err = deleteImage(repoName, oldTag, awsRegion)
 		if err != nil {
 			log.Fatal("Error deleting the old image tag")
 		}
@@ -189,9 +190,9 @@ func resourcePushImageUpdate(d *schema.ResourceData, meta interface{}) error {
 	return nil
 }
 
-func getImageManifest(repoName, imageTag string) (string, error) {
+func getImageManifest(repoName, imageTag, awsRegion string) (string, error) {
 
-	digestCMD := fmt.Sprintf("aws ecr batch-get-image --repository-name %s --image-ids imageTag=%s --query 'images[].imageManifest' --output text", repoName, imageTag)
+	digestCMD := fmt.Sprintf("aws ecr batch-get-image --repository-name %s --image-ids imageTag=%s --query 'images[].imageManifest' --output text --region %s", repoName, imageTag, awsRegion)
 	digest := exec.Command("bash", "-c", digestCMD)
 	out, err := digest.CombinedOutput() 
 	if err != nil {
@@ -200,8 +201,8 @@ func getImageManifest(repoName, imageTag string) (string, error) {
 	return string(out), nil
 }
 
-func updateImageTag(imageManifest, repoName, newImageTag string) error {
-	updateTagCMD := fmt.Sprintf("aws ecr put-image --repository-name %s --image-tag %s --image-manifest '%s'", repoName, newImageTag, imageManifest)
+func updateImageTag(imageManifest, repoName, newImageTag, awsRegion string) error {
+	updateTagCMD := fmt.Sprintf("aws ecr put-image --repository-name %s --image-tag %s --image-manifest '%s' --region %s", repoName, newImageTag, imageManifest, awsRegion)
 	updateTag := exec.Command("bash", "-c", updateTagCMD)
 	_, err := updateTag.CombinedOutput()
 	if err != nil {
@@ -271,8 +272,8 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	return nil
 }
 
-func deleteImage(repoName, imageTag string) error {
-	deleteCommand := fmt.Sprintf("aws ecr batch-delete-image --repository-name %s --image-ids imageTag=%s --output text", repoName, imageTag)
+func deleteImage(repoName, imageTag, awsRegion string) error {
+	deleteCommand := fmt.Sprintf("aws ecr batch-delete-image --repository-name %s --image-ids imageTag=%s --output text --region %s", repoName, imageTag, awsRegion)
 	deleteImage := exec.Command("bash", "-c", deleteCommand)
 	out, err := deleteImage.CombinedOutput()
 	if err != nil {
@@ -282,8 +283,9 @@ func deleteImage(repoName, imageTag string) error {
 	return nil
 }
 
-func repoExists(repoName string) (bool, error) {
-	decribeRepos := exec.Command("bash", "-c", "aws ecr describe-repositories --query 'repositories[].repositoryName' --output json")
+func repoExists(repoName, awsRegion string) (bool, error) {
+	describeReposCMD := fmt.Sprintf("aws ecr describe-repositories --query 'repositories[].repositoryName' --output json --region %s", awsRegion)
+	decribeRepos := exec.Command("bash", "-c", describeReposCMD)
 	out, err :=  decribeRepos.CombinedOutput()
 	if err != nil {
 		fmt.Println(string(out))
@@ -301,8 +303,8 @@ func repoExists(repoName string) (bool, error) {
  }
 
 
- func imageTagExist(imageTag, repoName string) (bool, error) {
-	listImagesCMD := fmt.Sprintf("aws ecr list-images --repository-name %s --query 'imageIds[].imageTag' --output json", repoName)
+ func imageTagExist(imageTag, repoName, awsRegion string) (bool, error) {
+	listImagesCMD := fmt.Sprintf("aws ecr list-images --repository-name %s --query 'imageIds[].imageTag' --output json --region %s", repoName, awsRegion)
 	listImages := exec.Command("bash", "-c", listImagesCMD)
 	out, err := listImages.CombinedOutput()
 	if err != nil {
