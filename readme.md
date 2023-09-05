@@ -2,6 +2,6 @@ This is a custom Terraform provider which allows you to build Docker images and 
 
 ### Roadmap:
 
-- Use Docker and AWS API
+- Use Docker and AWS Sdk
 - Build Tests 
 - Refine error handling 
