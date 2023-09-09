@@ -24,7 +24,7 @@ func ResourcePushImage() *schema.Resource {
 				},
 				"dockerfile_path": {
 					Type:        schema.TypeString,
-					Required:    false,
+					Optional:    true,
 					Default:     ".",
 				},
 				"image_name": {

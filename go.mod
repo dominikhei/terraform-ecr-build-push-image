@@ -1,4 +1,4 @@
-module main
+module terraform-provider-ecrpushimage
 
 go 1.21.0
 
