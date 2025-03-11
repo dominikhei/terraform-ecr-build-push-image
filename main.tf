@@ -8,13 +8,13 @@ terraform {
 }
 
 provider "ecrbuildpush" {
- }
+  aws_region = "eu-central-1"
+}
 
 resource "aws_ecr_push_image" "example" {
   provider = "ecrbuildpush"
   ecr_repository_name = "provider-test-repo"    
   dockerfile_path     = "."     
   image_name          = "promtail"          
-  image_tag           = "v24"            
-  aws_region          = "eu-central-1"         
+  image_tag           = "v22"                 
 }

@@ -33,11 +33,6 @@ func ResourcePushImage() *schema.Resource {
 					Type: schema.TypeString,
 					Required: true, 
 				},
-
-				"aws_region": {
-					Type: schema.TypeString,
-					Required: true,
-				},
 		},
 	}
 }
@@ -45,7 +40,7 @@ func ResourcePushImage() *schema.Resource {
 
 func resourcePushImageCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	
-	awsRegion := d.Get("aws_region").(string)
+    awsRegion := meta.(string)
 	repoName := d.Get("ecr_repository_name").(string)
 	imageName := d.Get("image_name").(string)
 	imageTag := d.Get("image_tag").(string)
@@ -130,11 +125,7 @@ func resourcePushImageDelete(ctx context.Context, d *schema.ResourceData, meta i
 		return diag.FromErr(fmt.Errorf("image_tag is not set"))
 	}
 	
-	awsRegion, ok := d.Get("aws_region").(string)
-	if !ok || awsRegion == "" {
-		return diag.FromErr(fmt.Errorf("aws_region is not set"))
-	}
-
+	awsRegion:= meta.(string)
 	out, err := repoExists(repoName, awsRegion)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("error retrieving repository: %s", err))
@@ -169,7 +160,7 @@ func resourcePushImageUpdate(ctx context.Context, d *schema.ResourceData, meta i
 		oldVal, newVal := d.GetChange("image_tag")
 		oldTag := oldVal.(string)
 		newTag := newVal.(string)
-		awsRegion := d.Get("aws_region").(string)
+		awsRegion := meta.(string)
 
 		out, err := repoExists(repoName, awsRegion)
 		if err != nil {
@@ -224,7 +215,7 @@ func resourcePushImageUpdate(ctx context.Context, d *schema.ResourceData, meta i
 func resourcePushImageRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
 
-	awsRegion := d.Get("aws_region").(string)
+	awsRegion := meta.(string)
 	repoName := d.Get("ecr_repository_name").(string)
 	imageTag := d.Get("image_tag").(string)
 
