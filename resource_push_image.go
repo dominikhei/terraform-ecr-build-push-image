@@ -9,8 +9,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 )
 
-//func check whether aws cli is installed 
-
 func ResourcePushImage() *schema.Resource {
 	return &schema.Resource{
 		CreateContext: resourcePushImageCreate,
@@ -40,9 +38,9 @@ func ResourcePushImage() *schema.Resource {
 					Type: schema.TypeString,
 					Required: true,
 				},
-			},
-		}
+		},
 	}
+}
 
 
 func resourcePushImageCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
@@ -57,7 +55,7 @@ func resourcePushImageCreate(ctx context.Context, d *schema.ResourceData, meta i
 
 	dockerStatus, err := isDockerDRunning()
 	if err != nil {
-		return diag.FromErr(fmt.Errorf("error checking whether Docker is running: %s", err))
+		return diag.FromErr(fmt.Errorf("the docker daemon is not running: %s", err))
 	}
 	if !dockerStatus {
 		return diag.Errorf("the Docker daemon is not running, please start it before running terraform apply")
@@ -104,6 +102,7 @@ func resourcePushImageCreate(ctx context.Context, d *schema.ResourceData, meta i
 		return diag.FromErr(fmt.Errorf("error tagging Docker image: %s", err))
 	}
 	tflog.Info(ctx, "Pushing Docker image")
+
 	err = pushDockerImage(ecrUriWithTag, awsRegion, ecrUri)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("error pushing Docker image: %s", err))
@@ -121,10 +120,20 @@ func resourcePushImageCreate(ctx context.Context, d *schema.ResourceData, meta i
 
 func resourcePushImageDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics { 
 	
-	repoName := d.Get("ecr_repository_name").(string)
-	imageTag := d.Get("image_tag").(string)
-	awsRegion := d.Get("aws_-region").(string)
-	var diags diag.Diagnostics
+	repoName, ok := d.Get("ecr_repository_name").(string)
+	if !ok || repoName == "" {
+		return diag.FromErr(fmt.Errorf("ecr_repository_name is not set"))
+	}
+	
+	imageTag, ok := d.Get("image_tag").(string)
+	if !ok || imageTag == "" {
+		return diag.FromErr(fmt.Errorf("image_tag is not set"))
+	}
+	
+	awsRegion, ok := d.Get("aws_region").(string)
+	if !ok || awsRegion == "" {
+		return diag.FromErr(fmt.Errorf("aws_region is not set"))
+	}
 
 	out, err := repoExists(repoName, awsRegion)
 	if err != nil {
@@ -150,7 +159,7 @@ func resourcePushImageDelete(ctx context.Context, d *schema.ResourceData, meta i
 	tflog.Info(ctx, "Docker image successfully removed from ECR")
 	
 	d.SetId("")
-	return diags
+	return diag.Diagnostics{}
 }
 
 func resourcePushImageUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
@@ -205,6 +214,7 @@ func resourcePushImageUpdate(ctx context.Context, d *schema.ResourceData, meta i
 		}
 		tflog.Info(ctx, "Docker image successfully updated")
 		d.SetId(imageManifest)
+		return diags
 		
 	}
 	tflog.Info(ctx, "No updates")
@@ -218,14 +228,13 @@ func resourcePushImageRead(ctx context.Context, d *schema.ResourceData, meta int
 	repoName := d.Get("ecr_repository_name").(string)
 	imageTag := d.Get("image_tag").(string)
 
-	
 	out, err := repoExists(repoName, awsRegion)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("error retrieving the ECR repository: %s", err))
 	}
 	if !out {
 		d.SetId("")
-		return diag.Errorf("the provided ECR repository does not exist")
+		return nil
 	}
 	d.Set("ecr_repository_name", repoName)
 
@@ -236,7 +245,7 @@ func resourcePushImageRead(ctx context.Context, d *schema.ResourceData, meta int
 	}
 	if !tagExists {
 		d.SetId("") 
-		return diag.Errorf("the tag does not exist in the ecr reposiory, deleting the ressource")
+		return nil
 	}
 	d.Set("image_tag", imageTag)
 

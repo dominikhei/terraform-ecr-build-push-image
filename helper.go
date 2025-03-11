@@ -106,15 +106,17 @@ func repoExists(repoName, awsRegion string) (bool, error) {
 	describeReposCMD := fmt.Sprintf("aws ecr describe-repositories --query 'repositories[].repositoryName' --output json --region %s", awsRegion)
 	decribeRepos := exec.Command("bash", "-c", describeReposCMD)
 	out, err :=  decribeRepos.CombinedOutput()
+	//log out
 	if err != nil {
-		fmt.Println(string(out))
 		return false, err
 	}
 	var repoNames []string
+	//log repoNames
 	if err := json.Unmarshal(out, &repoNames); err != nil {
 		return false, err
 	}
 	for _, name := range repoNames {
+		//log name, repoName
 		if name == repoName {
 			return true, nil }
 		}
