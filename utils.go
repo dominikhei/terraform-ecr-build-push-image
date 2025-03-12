@@ -7,6 +7,9 @@ import (
 	"strings"
 	"encoding/json"
 	"errors"
+	"crypto/sha256"
+	"encoding/hex"
+	"path/filepath"
 )
 
 func getImageManifest(repoName, imageTag, awsRegion string) (string, error) {
@@ -106,17 +109,14 @@ func repoExists(repoName, awsRegion string) (bool, error) {
 	describeReposCMD := fmt.Sprintf("aws ecr describe-repositories --query 'repositories[].repositoryName' --output json --region %s", awsRegion)
 	decribeRepos := exec.Command("bash", "-c", describeReposCMD)
 	out, err :=  decribeRepos.CombinedOutput()
-	//log out
 	if err != nil {
 		return false, err
 	}
 	var repoNames []string
-	//log repoNames
 	if err := json.Unmarshal(out, &repoNames); err != nil {
 		return false, err
 	}
 	for _, name := range repoNames {
-		//log name, repoName
 		if name == repoName {
 			return true, nil }
 		}
@@ -175,3 +175,18 @@ func repoExists(repoName, awsRegion string) (bool, error) {
 	}
 	return true, nil
  }
+
+
+ func getDockerfileHash(dockerfilePath string) (string, error) {
+	fullPath := filepath.Join(dockerfilePath, "Dockerfile")
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		return "", err
+	}
+
+	hash := sha256.New()
+	hash.Write(content)
+	hashBytes := hash.Sum(nil)
+
+	return hex.EncodeToString(hashBytes), nil
+}
