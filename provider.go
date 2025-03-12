@@ -17,7 +17,7 @@ func Provider() *schema.Provider {
             },
         },
         ResourcesMap: map[string]*schema.Resource{
-            "aws_ecr_push_image": ResourcePushImage(),
+            "ecrbuildpush_aws_ecr_push_image": ResourcePushImage(),
         },
         ConfigureContextFunc: providerConfigure,
     }
