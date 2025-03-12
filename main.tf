@@ -16,5 +16,5 @@ resource "aws_ecr_push_image" "example" {
   ecr_repository_name = "provider-test-repo"    
   dockerfile_path     = "."     
   image_name          = "promtail"          
-  image_tag           = "v22"                 
+  image_tag           = "v21"                 
 }
