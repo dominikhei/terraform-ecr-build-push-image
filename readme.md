@@ -1,6 +1,6 @@
-# Terraform ECR Image Provider
+# Terraform ECR Provider
 
-This Terraform provider allows you to build, tag, push, and manage Docker images in Amazon ECR (Elastic Container Registry).
+This Terraform provider allows you to build, push, and manage Docker images in Amazon ECR (Elastic Container Registry).
 
 ## Features
 
@@ -15,7 +15,7 @@ This Terraform provider allows you to build, tag, push, and manage Docker images
 
 - Docker daemon must be installed and running on the machine 
 - AWS cli with credentials configured to access ECR
-- Terraform v0.14.0 or later
+- Terraform
 
 ## Usage
 
