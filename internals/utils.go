@@ -1,60 +1,119 @@
-package internals 
+package internals
 
 import (
-	"os"
-	"os/exec"
-	"fmt"
-	"strings"
-	"encoding/json"
-	"errors"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-/*
-This file contains helper functions, executing the relevant CLI commands for the providers functionality.
+/* 
+Helper functions for executing AWS / Docker operations using the AWS SDK and docker cli
 */
 
+// Create a new ECR client with the given region
+func getECRClient(ctx context.Context, region string) (*ecr.Client, error) {
+	cfg, err := config.LoadDefaultConfig(ctx, 
+		config.WithRegion(region),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load SDK config: %w", err)
+	}
+
+	return ecr.NewFromConfig(cfg), nil
+}
+
+// Create an STS client for account operations, used to retrieve the AWS AccountID
+func getSTSClient(ctx context.Context) (*sts.Client, error) {
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load SDK config: %w", err)
+	}
+
+	return sts.NewFromConfig(cfg), nil
+}
+
 // Function to get the image manifest from ECR.
-// Requires the name of the repository, tag of the image and its AWS region as inputs.
 func getImageManifest(repoName, imageTag, awsRegion string) (string, error) {
-	digestCMD := fmt.Sprintf("aws ecr batch-get-image --repository-name %s --image-ids imageTag=%s --query 'images[].imageManifest' --output text --region %s", repoName, imageTag, awsRegion)
-	digest := exec.Command("bash", "-c", digestCMD)
-	out, err := digest.CombinedOutput() 
+	ctx := context.TODO()
+	client, err := getECRClient(ctx, awsRegion)
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+
+	input := &ecr.BatchGetImageInput{
+		RepositoryName: aws.String(repoName),
+		ImageIds: []types.ImageIdentifier{
+			{
+				ImageTag: aws.String(imageTag),
+			},
+		},
+	}
+
+	result, err := client.BatchGetImage(ctx, input)
+	if err != nil {
+		return "", fmt.Errorf("error getting image manifest: %w", err)
+	}
+
+	if len(result.Images) == 0 {
+		return "", fmt.Errorf("no image found with tag %s in repository %s", imageTag, repoName)
+	}
+
+	return *result.Images[0].ImageManifest, nil
 }
 
 // Function to update the image tag in ECR.
-// Requires the mainfest of the image from ECR, the name of the repository, the new tag of the image, that should replkace the old one and its AWS region as inputs.
 func updateImageTag(imageManifest, repoName, newImageTag, awsRegion string) error {
-	updateTagCMD := fmt.Sprintf("aws ecr put-image --repository-name %s --image-tag %s --image-manifest '%s' --region %s", repoName, newImageTag, imageManifest, awsRegion)
-	updateTag := exec.Command("bash", "-c", updateTagCMD)
-	_, err := updateTag.CombinedOutput()
+	ctx := context.TODO()
+	client, err := getECRClient(ctx, awsRegion)
 	if err != nil {
 		return err
 	}
+
+	input := &ecr.PutImageInput{
+		RepositoryName: aws.String(repoName),
+		ImageManifest:  aws.String(imageManifest),
+		ImageTag:       aws.String(newImageTag),
+	}
+
+	_, err = client.PutImage(ctx, input)
+	if err != nil {
+		return fmt.Errorf("error updating image tag: %w", err)
+	}
+
 	return nil
 }
 
 // Function to get the AWS account ID.
 func getAWSAccountID() (string, error) {
-	getAccountIdCMD := exec.Command("aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text")
-	accountId, err := getAccountIdCMD.CombinedOutput()
+	ctx := context.TODO()
+	client, err := getSTSClient(ctx)
 	if err != nil {
 		return "", err
 	}
-	accountIdTrimmed := strings.TrimSpace(string(accountId))
-	return accountIdTrimmed, nil
+
+	result, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return "", fmt.Errorf("error getting caller identity: %w", err)
+	}
+
+	return *result.Account, nil
 }
 
 // Function executing the docker build command.
-// Recquiring the imageName:tag and the path to the Dockerfile as input.
 func buildDockerImage(imageNameAndTag, dockerfilePath string) error {
-	dockerBuildImage := exec.Command("docker", "build", "-t", imageNameAndTag, dockerfilePath) 
+	dockerBuildImage := exec.Command("docker", "build", "-t", imageNameAndTag, dockerfilePath)
 	out, err := dockerBuildImage.CombinedOutput()
 	if err != nil {
 		fmt.Println(string(out))
@@ -64,7 +123,6 @@ func buildDockerImage(imageNameAndTag, dockerfilePath string) error {
 }
 
 // Function to tag the local image.
-// Requires imageName:tag and the ECR uri with a tag appendend as inputs.
 func tagDockerImage(imageNameAndTag, ecrUriWithTag string) error {
 	tagCmd := fmt.Sprintf("docker tag %s %s", imageNameAndTag, ecrUriWithTag)
 	tag := exec.Command("bash", "-c", tagCmd)
@@ -77,113 +135,148 @@ func tagDockerImage(imageNameAndTag, ecrUriWithTag string) error {
 }
 
 // Function to push the image to ECR.
-// Requires the ECR Uri with the image tag appended, the region of the repository and the ECR Uri without tag appended as inputs.
 func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
-	dockerPushCmd := fmt.Sprintf("docker push %s", ecrUriWithTag)
-	pushImage := exec.Command("bash", "-c", dockerPushCmd)
-	authenticateCommand := exec.Command("bash", "-c", "aws ecr get-login-password --region " + awsRegion + " | docker login --username AWS --password-stdin " + ecrUri)
-	var err error
-	pushImage.Stdin, err = authenticateCommand.StdoutPipe()
+	ctx := context.TODO()
+	client, err := getECRClient(ctx, awsRegion)
 	if err != nil {
-		fmt.Println(pushImage.Stdin) 
 		return err
 	}
-	pushImage.Stdout = os.Stdout
-	errStart := pushImage.Start()
-	errRun := authenticateCommand.Run()
-	errWait := pushImage.Wait()
-	if errStart != nil {
-		fmt.Println(errStart)
-		return errStart
+	authInput := &ecr.GetAuthorizationTokenInput{}
+	authOutput, err := client.GetAuthorizationToken(ctx, authInput)
+	if err != nil {
+		return fmt.Errorf("error getting ECR authorization token: %w", err)
 	}
-	if errRun != nil {
-		fmt.Println(errRun)
-		return errRun
+
+	if len(authOutput.AuthorizationData) == 0 {
+		return fmt.Errorf("no authorization data returned")
 	}
-	if errWait != nil {
-		fmt.Println(errWait)
-		return errWait
+	authToken := *authOutput.AuthorizationData[0].AuthorizationToken
+	
+	dockerLoginCmd := fmt.Sprintf("echo %s | base64 -d | cut -d: -f2 | docker login --username AWS --password-stdin %s", 
+		authToken, ecrUri)
+	login := exec.Command("bash", "-c", dockerLoginCmd)
+	loginOut, err := login.CombinedOutput()
+	if err != nil {
+		fmt.Println(string(loginOut))
+		return fmt.Errorf("error logging in to ECR: %w", err)
 	}
+
+	pushCmd := fmt.Sprintf("docker push %s", ecrUriWithTag)
+	push := exec.Command("bash", "-c", pushCmd)
+	pushOut, err := push.CombinedOutput()
+	if err != nil {
+		fmt.Println(string(pushOut))
+		return fmt.Errorf("error pushing image: %w", err)
+	}
+
 	return nil
 }
 
 // Function to delete the image from ECR.
-// Requires the repositories name, image tag and AWS region of the repository as inputs.
 func deleteImage(repoName, imageTag, awsRegion string) error {
-	deleteCommand := fmt.Sprintf("aws ecr batch-delete-image --repository-name %s --image-ids imageTag=%s --output text --region %s", repoName, imageTag, awsRegion)
-	deleteImage := exec.Command("bash", "-c", deleteCommand)
-	out, err := deleteImage.CombinedOutput()
+	ctx := context.TODO()
+	client, err := getECRClient(ctx, awsRegion)
 	if err != nil {
-		fmt.Println(string(out))
 		return err
 	}
+
+	input := &ecr.BatchDeleteImageInput{
+		RepositoryName: aws.String(repoName),
+		ImageIds: []types.ImageIdentifier{
+			{
+				ImageTag: aws.String(imageTag),
+			},
+		},
+	}
+
+	_, err = client.BatchDeleteImage(ctx, input)
+	if err != nil {
+		return fmt.Errorf("error deleting image: %w", err)
+	}
+
 	return nil
 }
 
-// Function to check whether the repository exists in the specified AWS region.
-// Requires the repositories name and its region as inputs.
+// Funtion to check whether the repository exists in the specified region.
 func repoExists(repoName, awsRegion string) (bool, error) {
-	describeReposCMD := fmt.Sprintf("aws ecr describe-repositories --query 'repositories[].repositoryName' --output json --region %s", awsRegion)
-	decribeRepos := exec.Command("bash", "-c", describeReposCMD)
-	out, err :=  decribeRepos.CombinedOutput()
+	ctx := context.TODO()
+	client, err := getECRClient(ctx, awsRegion)
 	if err != nil {
 		return false, err
 	}
-	var repoNames []string
-	if err := json.Unmarshal(out, &repoNames); err != nil {
-		return false, err
-	}
-	for _, name := range repoNames {
-		if name == repoName {
-			return true, nil }
-		}
-	return false, errors.New("repository does not exist")
- }
 
-// Function to check whether the image tag exists in ECR.
-// Requires the image tag, the name of the repsotiry in which to look for and its AWS region as inputs.
- func imageTagExist(imageTag, repoName, awsRegion string) (bool, error) {
-	listImagesCMD := fmt.Sprintf("aws ecr list-images --repository-name %s --query 'imageIds[].imageTag' --output json --region %s", repoName, awsRegion)
-	listImages := exec.Command("bash", "-c", listImagesCMD)
-	out, err := listImages.CombinedOutput()
-	if err != nil {
-		fmt.Println(string(out))
-		return false, err
+	input := &ecr.DescribeRepositoriesInput{
+		RepositoryNames: []string{repoName},
 	}
-	var imageTags []string
-	if err := json.Unmarshal(out, &imageTags); err != nil {
-		return false, err
-	}
-	for _, name := range imageTags {
-		if name == imageTag {
-			return true, nil }
-		}
-	return false, nil
- }
 
- // Function checking the ECR repositories mutability settings.
- // Recquires the name of the repository and its AWS region as inputs. 
- func isMutable(repoName, awsRegion string) (bool, error) {
-	tagMutabilityCMD := fmt.Sprintf("aws ecr describe-repositories --repository-names %s --query 'repositories[].imageTagMutability' --output json --region %s", repoName, awsRegion)
-	tagMutability := exec.Command("bash", "-c", tagMutabilityCMD)
-	out, err := tagMutability.CombinedOutput()
+	_, err = client.DescribeRepositories(ctx, input)
 	if err != nil {
-		return false, err
-	}
-	var response []string
-	if err := json.Unmarshal(out, &response); err != nil {
-		return false, err
-	}
-	for _, value := range response {
-		if value == "IMMUTABLE" {
+		var notFoundErr *types.RepositoryNotFoundException
+		if errors.As(err, &notFoundErr) {
 			return false, nil
 		}
+		return false, fmt.Errorf("error checking repository existence: %w", err)
 	}
+
 	return true, nil
- }
+}
+
+// Function to check whether the image tag exists in the specified repository .
+func imageTagExist(imageTag, repoName, awsRegion string) (bool, error) {
+	ctx := context.TODO()
+	client, err := getECRClient(ctx, awsRegion)
+	if err != nil {
+		return false, err
+	}
+
+	input := &ecr.ListImagesInput{
+		RepositoryName: aws.String(repoName),
+		Filter: &types.ListImagesFilter{
+			TagStatus: types.TagStatusTagged,
+		},
+	}
+
+	result, err := client.ListImages(ctx, input)
+	if err != nil {
+		return false, fmt.Errorf("error listing images: %w", err)
+	}
+
+	for _, imageID := range result.ImageIds {
+		if imageID.ImageTag != nil && *imageID.ImageTag == imageTag {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// Function checking the ECR repositories mutability settings.
+func isMutable(repoName, awsRegion string) (bool, error) {
+	ctx := context.TODO()
+	client, err := getECRClient(ctx, awsRegion)
+	if err != nil {
+		return false, err
+	}
+
+	input := &ecr.DescribeRepositoriesInput{
+		RepositoryNames: []string{repoName},
+	}
+
+	result, err := client.DescribeRepositories(ctx, input)
+	if err != nil {
+		return false, fmt.Errorf("error describing repository: %w", err)
+	}
+
+	if len(result.Repositories) == 0 {
+		return false, fmt.Errorf("repository %s not found", repoName)
+	}
+
+	repo := result.Repositories[0]
+	return repo.ImageTagMutability != types.ImageTagMutabilityImmutable, nil
+}
 
 // Function checking whether the Docker daemon is running.
- func isDockerDRunning() (bool, error) {
+func isDockerDRunning() (bool, error) {
 	dockerCheckCMD := "docker ps"
 	isInstalled := exec.Command("bash", "-c", dockerCheckCMD)
 	out, err := isInstalled.CombinedOutput()
@@ -194,11 +287,10 @@ func repoExists(repoName, awsRegion string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
- }
+}
 
-// Function to calculate a hash value of the Dockerfile based on its content using a SHA256 algorithm.
-// It is used to detect changes within a Dockerfile in a simple manner, leading to a rebuilt.
- func getDockerfileHash(dockerfilePath string) (string, error) {
+// Function to calculate a hash value of the Dockerfile based on its content using the SHA256 algorithm.
+func getDockerfileHash(dockerfilePath string) (string, error) {
 	fullPath := filepath.Join(dockerfilePath, "Dockerfile")
 	content, err := os.ReadFile(fullPath)
 	if err != nil {
