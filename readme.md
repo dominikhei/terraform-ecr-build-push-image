@@ -95,9 +95,7 @@ When you run `terraform destroy` or remove the resource:
 
 ### Roadmap:
 
-- Use Docker and AWS Sdk
 - Build Tests 
-- Refine error handling 
 
 ### Note:
 This is a custom provider and in no way affiliated with Amazon Web Services or Docker.
