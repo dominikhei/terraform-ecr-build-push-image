@@ -27,10 +27,10 @@ import (
 )
 
 /*
-Helper functions for executing AWS / Docker operations using the AWS SDK and Moby Docker client
+Helper functions for executing AWS / Docker operations using the AWS SDK and Moby Docker client.
 */
 
-// Create a new ECR client with the given region
+// Create a new ECR client with the given region.
 func getECRClient(ctx context.Context, region string) (*ecr.Client, error) {
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(region),
@@ -42,7 +42,7 @@ func getECRClient(ctx context.Context, region string) (*ecr.Client, error) {
 	return ecr.NewFromConfig(cfg), nil
 }
 
-// Create an STS client for account operations, used to retrieve the AWS AccountID
+// Create an STS client for account operations, used to retrieve the AWS AccountID.
 func getSTSClient(ctx context.Context) (*sts.Client, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -119,7 +119,7 @@ func getAWSAccountID() (string, error) {
 	return *result.Account, nil
 }
 
-// Function returning a Docker client
+// Function returning a Docker client.
 func getDockerClient() (*client.Client, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -128,7 +128,7 @@ func getDockerClient() (*client.Client, error) {
 	return cli, nil
 }
 
-// Function executing the docker build command using Moby
+// Function executing the docker build command using Moby.
 func buildDockerImage(imageNameAndTag, dockerfilePath string) error {
 	ctx := context.Background()
 	cli, err := getDockerClient()
@@ -137,27 +137,22 @@ func buildDockerImage(imageNameAndTag, dockerfilePath string) error {
 	}
 	defer cli.Close()
 
-	// Create build context
 	buildContext, err := archive.TarWithOptions(dockerfilePath, &archive.TarOptions{})
 	if err != nil {
 		return fmt.Errorf("error creating build context: %w", err)
 	}
 	defer buildContext.Close()
-
-	// Build image
 	buildOptions := types.ImageBuildOptions{
 		Tags:       []string{imageNameAndTag},
 		Dockerfile: "Dockerfile",
 		Remove:     true,
 	}
-
 	resp, err := cli.ImageBuild(ctx, buildContext, buildOptions)
 	if err != nil {
 		return fmt.Errorf("error building Docker image: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Print build output
 	dec := json.NewDecoder(resp.Body)
 	for {
 		var msg jsonmessage.JSONMessage
@@ -180,7 +175,7 @@ func buildDockerImage(imageNameAndTag, dockerfilePath string) error {
 	return nil
 }
 
-// Function to tag the local image using Moby
+// Function to tag the local image using Moby.
 func tagDockerImage(imageNameAndTag, ecrUriWithTag string) error {
 	ctx := context.Background()
 	cli, err := getDockerClient()
@@ -188,15 +183,13 @@ func tagDockerImage(imageNameAndTag, ecrUriWithTag string) error {
 		return err
 	}
 	defer cli.Close()
-
 	return cli.ImageTag(ctx, imageNameAndTag, ecrUriWithTag)
 }
 
-// Function to push the image to ECR using Moby
+// Function to push the image to ECR using Moby.
 func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	ctx := context.Background()
 
-	// Get ECR authorization token
 	ecrClient, err := getECRClient(ctx, awsRegion)
 	if err != nil {
 		return err
@@ -207,19 +200,16 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	if err != nil {
 		return fmt.Errorf("error getting ECR authorization token: %w", err)
 	}
-
 	if len(authOutput.AuthorizationData) == 0 {
 		return fmt.Errorf("no authorization data returned")
 	}
 
-	// Decode the authorization token
 	authToken := *authOutput.AuthorizationData[0].AuthorizationToken
 	decodedToken, err := base64.StdEncoding.DecodeString(authToken)
 	if err != nil {
 		return fmt.Errorf("error decoding authorization token: %w", err)
 	}
 
-	// Extract username and password from token
 	tokenParts := strings.SplitN(string(decodedToken), ":", 2)
 	if len(tokenParts) != 2 {
 		return fmt.Errorf("invalid authorization token format")
@@ -227,14 +217,12 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	username := tokenParts[0]
 	password := tokenParts[1]
 
-	// Create Docker client
 	cli, err := getDockerClient()
 	if err != nil {
 		return err
 	}
 	defer cli.Close()
 
-	// Login to ECR
 	authConfig := registry.AuthConfig{
 		Username:      username,
 		Password:      password,
@@ -245,7 +233,6 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 		return fmt.Errorf("error encoding auth config: %w", err)
 	}
 
-	// Push the image
 	opts := image.PushOptions{
 		RegistryAuth: base64.StdEncoding.EncodeToString(encodedAuth),
 	}
@@ -256,7 +243,6 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	}
 	defer pushResp.Close()
 
-	// Display push output
 	dec := json.NewDecoder(pushResp)
 	for {
 		var msg jsonmessage.JSONMessage
@@ -266,18 +252,15 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 			}
 			return fmt.Errorf("error decoding push response: %w", err)
 		}
-
 		if msg.Error != nil {
 			return errors.New(msg.Error.Message)
 		}
-
 		if msg.Progress != nil || msg.Status != "" {
 			if msg.Status != "" {
 				fmt.Printf("%s\n", msg.Status)
 			}
 		}
 	}
-
 	return nil
 }
 
@@ -302,7 +285,6 @@ func deleteImage(repoName, imageTag, awsRegion string) error {
 	if err != nil {
 		return fmt.Errorf("error deleting image: %w", err)
 	}
-
 	return nil
 }
 
@@ -326,7 +308,6 @@ func repoExists(repoName, awsRegion string) (bool, error) {
 		}
 		return false, fmt.Errorf("error checking repository existence: %w", err)
 	}
-
 	return true, nil
 }
 
@@ -355,7 +336,6 @@ func imageTagExist(imageTag, repoName, awsRegion string) (bool, error) {
 			return true, nil
 		}
 	}
-
 	return false, nil
 }
 
@@ -375,16 +355,14 @@ func isMutable(repoName, awsRegion string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("error describing repository: %w", err)
 	}
-
 	if len(result.Repositories) == 0 {
 		return false, fmt.Errorf("repository %s not found", repoName)
 	}
-
 	repo := result.Repositories[0]
 	return repo.ImageTagMutability != ecrtypes.ImageTagMutabilityImmutable, nil
 }
 
-// Function checking whether the Docker daemon is running using Moby
+// Function checking whether the Docker daemon is running using Moby.
 func isDockerDRunning() (bool, error) {
 	ctx := context.Background()
 	cli, err := getDockerClient()
