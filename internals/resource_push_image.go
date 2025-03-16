@@ -1,12 +1,12 @@
-package internals 
+package internals
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 func ResourcePushImage() *schema.Resource {
@@ -14,43 +14,42 @@ func ResourcePushImage() *schema.Resource {
 		CreateContext: resourcePushImageCreate,
 		DeleteContext: resourcePushImageDelete,
 		UpdateContext: resourcePushImageUpdate,
-		ReadContext: resourcePushImageRead,
+		ReadContext:   resourcePushImageRead,
 		Schema: map[string]*schema.Schema{
-				"ecr_repository_name": {
-					Type:        schema.TypeString,
-					Required:    true,
-					Description: "The name of your ECR repository",
-				},
-				"dockerfile_path": {
-					Type:        schema.TypeString,
-					Optional:    true,
-					Default:     ".",
-					Description: "The path to the Dockerfile. Dockerfiles must always be called 'Dockerfile'",
-				},
-				"image_name": {
-					Type: schema.TypeString,
-					Required: true,
-					Description: "The name of the Docker image",
-				},
-				"image_tag": {
-					Type: schema.TypeString,
-					Required: true, 
-					Description: "The tag of the Docker image",
-				},
-				"dockerfile_hash" : {
-					Type: schema.TypeString,
-					Computed: true,
-					Description: "Do not set this field, it is for internal use only",
-				},
+			"ecr_repository_name": {
+				Type:        schema.TypeString,
+				Required:    true,
+				Description: "The name of your ECR repository",
+			},
+			"dockerfile_path": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Default:     ".",
+				Description: "The path to the Dockerfile. Dockerfiles must always be called 'Dockerfile'",
+			},
+			"image_name": {
+				Type:        schema.TypeString,
+				Required:    true,
+				Description: "The name of the Docker image",
+			},
+			"image_tag": {
+				Type:        schema.TypeString,
+				Required:    true,
+				Description: "The tag of the Docker image",
+			},
+			"dockerfile_hash": {
+				Type:        schema.TypeString,
+				Computed:    true,
+				Description: "Do not set this field, it is for internal use only",
+			},
 		},
 		CustomizeDiff: customizeDiffForDockerfileChanges,
 	}
 }
 
-
 func resourcePushImageCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	
-    awsRegion := meta.(string)
+
+	awsRegion := meta.(string)
 	repoName := d.Get("ecr_repository_name").(string)
 	imageName := d.Get("image_name").(string)
 	imageTag := d.Get("image_tag").(string)
@@ -70,7 +69,10 @@ func resourcePushImageCreate(ctx context.Context, d *schema.ResourceData, meta i
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("error reading Dockerfile: %s", err))
 	}
-	d.Set("dockerfile_hash", dockerfileHash)
+	err = d.Set("dockerfile_hash", dockerfileHash)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("error setting new Dockerfile hash"))
+	}
 
 	out, err := repoExists(repoName, awsRegion)
 	if err != nil {
@@ -84,7 +86,7 @@ func resourcePushImageCreate(ctx context.Context, d *schema.ResourceData, meta i
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("error regarding repository mutability: %s", err))
 	}
-	tagAlreadyExists, err := imageTagExist(imageTag, repoName, awsRegion) 
+	tagAlreadyExists, err := imageTagExist(imageTag, repoName, awsRegion)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("error regarding image tag: %s", err))
 	}
@@ -128,20 +130,19 @@ func resourcePushImageCreate(ctx context.Context, d *schema.ResourceData, meta i
 	return diags
 }
 
+func resourcePushImageDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 
-func resourcePushImageDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics { 
-	
 	repoName, ok := d.Get("ecr_repository_name").(string)
 	if !ok || repoName == "" {
 		return diag.FromErr(fmt.Errorf("ecr_repository_name is not set"))
 	}
-	
+
 	imageTag, ok := d.Get("image_tag").(string)
 	if !ok || imageTag == "" {
 		return diag.FromErr(fmt.Errorf("image_tag is not set"))
 	}
-	
-	awsRegion:= meta.(string)
+
+	awsRegion := meta.(string)
 	out, err := repoExists(repoName, awsRegion)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("error retrieving repository: %s", err))
@@ -164,7 +165,7 @@ func resourcePushImageDelete(ctx context.Context, d *schema.ResourceData, meta i
 		return diag.FromErr(fmt.Errorf("error deleting image: %s", err))
 	}
 	tflog.Info(ctx, "Docker image successfully removed from ECR")
-	
+
 	d.SetId("")
 	return diag.Diagnostics{}
 }
@@ -190,7 +191,7 @@ func resourcePushImageUpdate(ctx context.Context, d *schema.ResourceData, meta i
 		if !out {
 			return diag.FromErr(fmt.Errorf("the provided ECR repository does not exist"))
 		}
-	
+
 		out, err = imageTagExist(oldTag, repoName, awsRegion)
 		if err != nil {
 			return diag.FromErr(fmt.Errorf("error regarding image tag: %s", err))
@@ -198,16 +199,16 @@ func resourcePushImageUpdate(ctx context.Context, d *schema.ResourceData, meta i
 		if !out {
 			return diag.FromErr(fmt.Errorf("the previous image tag does not exist anymore in the repository"))
 		}
-	
+
 		repoMutability, err := isMutable(repoName, awsRegion)
 		if err != nil {
 			return diag.FromErr(fmt.Errorf("error regarding repository mutability: %s", err))
 		}
-		newTagAlreadyExists, err := imageTagExist(newTag, repoName, awsRegion) 
+		newTagAlreadyExists, err := imageTagExist(newTag, repoName, awsRegion)
 		if err != nil {
 			return diag.FromErr(fmt.Errorf("error with updating the image tag: %s", err))
 		}
-	
+
 		if newTagAlreadyExists && !repoMutability {
 			return diag.FromErr(fmt.Errorf("the repositorie is immutable and you are trying to update an image with a tag that already exists in the repositorie"))
 		}
@@ -218,7 +219,7 @@ func resourcePushImageUpdate(ctx context.Context, d *schema.ResourceData, meta i
 		}
 		err = updateImageTag(imageManifest, repoName, newTag, awsRegion)
 		if err != nil {
-			return diag.FromErr(fmt.Errorf("error updating Image tag: %s", err))	
+			return diag.FromErr(fmt.Errorf("error updating Image tag: %s", err))
 		}
 		err = deleteImage(repoName, oldTag, awsRegion)
 		if err != nil {
@@ -236,7 +237,7 @@ func resourcePushImageUpdate(ctx context.Context, d *schema.ResourceData, meta i
 		ecrUri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com", awsAccountId, awsRegion)
 		ecrUriWithRepo := fmt.Sprintf("%s/%s", ecrUri, repoName)
 		ecrUriWithTag := fmt.Sprintf("%s:%s", ecrUriWithRepo, imageTag)
-	
+
 		tflog.Info(ctx, fmt.Sprintf("Building Docker image: %s", imageName))
 		err = buildDockerImage(imageNameAndTag, dockerfilePath)
 		if err != nil {
@@ -248,13 +249,13 @@ func resourcePushImageUpdate(ctx context.Context, d *schema.ResourceData, meta i
 			return diag.FromErr(fmt.Errorf("error tagging Docker image: %s", err))
 		}
 		tflog.Info(ctx, "Pushing Docker image")
-	
+
 		err = pushDockerImage(ecrUriWithTag, awsRegion, ecrUri)
 		if err != nil {
 			return diag.FromErr(fmt.Errorf("error pushing Docker image: %s", err))
 		}
 		tflog.Info(ctx, "Docker image successfully pushed to ECR")
-	
+
 		imageManifest, err := getImageManifest(repoName, imageTag, awsRegion)
 		if err != nil {
 			return diag.FromErr(fmt.Errorf("error retrieving image manifest: %s", err))
@@ -282,18 +283,23 @@ func resourcePushImageRead(ctx context.Context, d *schema.ResourceData, meta int
 		d.SetId("")
 		return nil
 	}
-	d.Set("ecr_repository_name", repoName)
-
+	err = d.Set("ecr_repository_name", repoName)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("error setting ECR repository name"))
+	}
 
 	tagExists, err := imageTagExist(imageTag, repoName, awsRegion)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("error retrieving image tag: %s", err))
 	}
 	if !tagExists {
-		d.SetId("") 
+		d.SetId("")
 		return nil
 	}
-	d.Set("image_tag", imageTag)
+	err = d.Set("image_tag", imageTag)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("error setting image tag"))
+	}
 
 	imageManifest, err := getImageManifest(repoName, imageTag, awsRegion)
 	if err != nil {
@@ -314,11 +320,17 @@ func customizeDiffForDockerfileChanges(ctx context.Context, d *schema.ResourceDi
 	if err != nil {
 		return fmt.Errorf("error calculating Dockerfile hash: %w", err)
 	}
-	
+
 	oldHash := d.Get("dockerfile_hash").(string)
 	if oldHash != newHash {
-		d.SetNew("dockerfile_hash", newHash)
-		d.ForceNew("dockerfile_hash")
+		err = d.SetNew("dockerfile_hash", newHash)
+		if err != nil {
+			return fmt.Errorf("Error setting new Dockerfile hash")
+		}
+		err = d.ForceNew("dockerfile_hash")
+		if err != nil {
+			return fmt.Errorf("Error forcing new Dockerfile hash")
+		}
 	}
 	return nil
 }

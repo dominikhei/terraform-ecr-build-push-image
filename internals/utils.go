@@ -32,7 +32,7 @@ Helper functions for executing AWS / Docker operations using the AWS SDK and Mob
 
 // Create a new ECR client with the given region
 func getECRClient(ctx context.Context, region string) (*ecr.Client, error) {
-	cfg, err := config.LoadDefaultConfig(ctx, 
+	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(region),
 	)
 	if err != nil {
@@ -119,7 +119,7 @@ func getAWSAccountID() (string, error) {
 	return *result.Account, nil
 }
 
-// Get a Docker client
+// Function returning a Docker client
 func getDockerClient() (*client.Client, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -195,13 +195,13 @@ func tagDockerImage(imageNameAndTag, ecrUriWithTag string) error {
 // Function to push the image to ECR using Moby
 func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	ctx := context.Background()
-	
+
 	// Get ECR authorization token
 	ecrClient, err := getECRClient(ctx, awsRegion)
 	if err != nil {
 		return err
 	}
-	
+
 	authInput := &ecr.GetAuthorizationTokenInput{}
 	authOutput, err := ecrClient.GetAuthorizationToken(ctx, authInput)
 	if err != nil {
@@ -211,14 +211,14 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	if len(authOutput.AuthorizationData) == 0 {
 		return fmt.Errorf("no authorization data returned")
 	}
-	
+
 	// Decode the authorization token
 	authToken := *authOutput.AuthorizationData[0].AuthorizationToken
 	decodedToken, err := base64.StdEncoding.DecodeString(authToken)
 	if err != nil {
 		return fmt.Errorf("error decoding authorization token: %w", err)
 	}
-	
+
 	// Extract username and password from token
 	tokenParts := strings.SplitN(string(decodedToken), ":", 2)
 	if len(tokenParts) != 2 {
@@ -226,36 +226,36 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 	}
 	username := tokenParts[0]
 	password := tokenParts[1]
-	
+
 	// Create Docker client
 	cli, err := getDockerClient()
 	if err != nil {
 		return err
 	}
 	defer cli.Close()
-	
+
 	// Login to ECR
 	authConfig := registry.AuthConfig{
-		Username: username,
-		Password: password,
+		Username:      username,
+		Password:      password,
 		ServerAddress: strings.TrimPrefix(ecrUri, "https://"),
 	}
 	encodedAuth, err := json.Marshal(authConfig)
 	if err != nil {
 		return fmt.Errorf("error encoding auth config: %w", err)
 	}
-	
+
 	// Push the image
 	opts := image.PushOptions{
 		RegistryAuth: base64.StdEncoding.EncodeToString(encodedAuth),
 	}
-	
+
 	pushResp, err := cli.ImagePush(ctx, ecrUriWithTag, opts)
 	if err != nil {
 		return fmt.Errorf("error pushing image: %w", err)
 	}
 	defer pushResp.Close()
-	
+
 	// Display push output
 	dec := json.NewDecoder(pushResp)
 	for {
@@ -266,18 +266,18 @@ func pushDockerImage(ecrUriWithTag, awsRegion, ecrUri string) error {
 			}
 			return fmt.Errorf("error decoding push response: %w", err)
 		}
-		
+
 		if msg.Error != nil {
 			return errors.New(msg.Error.Message)
 		}
-		
+
 		if msg.Progress != nil || msg.Status != "" {
 			if msg.Status != "" {
 				fmt.Printf("%s\n", msg.Status)
 			}
 		}
 	}
-	
+
 	return nil
 }
 

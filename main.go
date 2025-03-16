@@ -1,8 +1,9 @@
-package main 
+package main
 
 import (
-	"github.com/hashicorp/terraform-plugin-sdk/v2/plugin"
 	internals "terraform-provider-ecrpushimage/internals"
+
+	"github.com/hashicorp/terraform-plugin-sdk/v2/plugin"
 )
 
 func main() {
