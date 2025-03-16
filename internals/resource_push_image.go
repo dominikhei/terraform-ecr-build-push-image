@@ -325,11 +325,11 @@ func customizeDiffForDockerfileChanges(ctx context.Context, d *schema.ResourceDi
 	if oldHash != newHash {
 		err = d.SetNew("dockerfile_hash", newHash)
 		if err != nil {
-			return fmt.Errorf("Error setting new Dockerfile hash")
+			return fmt.Errorf("error setting new Dockerfile hash")
 		}
 		err = d.ForceNew("dockerfile_hash")
 		if err != nil {
-			return fmt.Errorf("Error forcing new Dockerfile hash")
+			return fmt.Errorf("error forcing new Dockerfile hash")
 		}
 	}
 	return nil
